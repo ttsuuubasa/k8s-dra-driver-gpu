@@ -265,7 +265,7 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimRef kubeletplugin.Name
 
 	switch pc.CheckpointState {
 	case ClaimCheckpointStatePrepareStarted, ClaimCheckpointStatePrepareCompleted:
-		if err := s.unprepareDevices(ctx, &pc.Status); err != nil {
+		if err := s.unprepareDevices(ctx, &pc); err != nil {
 			return fmt.Errorf("unprepare devices failed: %w", err)
 		}
 	default:
@@ -422,12 +422,12 @@ func (s *DeviceState) prepareDevices(ctx context.Context, claim *resourceapi.Res
 	return preparedDevices, nil
 }
 
-func (s *DeviceState) unprepareDevices(ctx context.Context, cs *resourceapi.ResourceClaimStatus) error {
+func (s *DeviceState) unprepareDevices(ctx context.Context, pc *PreparedClaim) error {
 	// Generate a mapping of each OpaqueDeviceConfigs to the Device.Results it
 	// applies to. Non-strict decoding: do not error out on unknown fields (data
 	// source is checkpointed JSON written by potentially newer versions of this
 	// driver).
-	configResultsMap, err := s.getConfigResultsMap(cs, configapi.NonstrictDecoder)
+	configResultsMap, err := s.getConfigResultsMap(&pc.Status, configapi.NonstrictDecoder)
 	if err != nil {
 		return fmt.Errorf("error generating configResultsMap: %w", err)
 	}
@@ -439,6 +439,11 @@ func (s *DeviceState) unprepareDevices(ctx context.Context, cs *resourceapi.Reso
 			// If a channel type, remove the ComputeDomain label from the node
 			if err := s.computeDomainManager.RemoveNodeLabel(ctx, config.DomainID); err != nil {
 				return fmt.Errorf("error removing Node label for ComputeDomain: %w", err)
+			}
+			if featuregates.Enabled(featuregates.ComputeDomainBindingConditions) {
+				if err := s.computeDomainManager.RemoveResourceClaimName(ctx, config.DomainID, pc.Name); err != nil {
+					return fmt.Errorf("error removing ResourceClaim Name for ComputeDomain: %w", err)
+				}
 			}
 		case *configapi.ComputeDomainDaemonConfig:
 			// If a daemon type, unprepare the new ComputeDomain daemon.
@@ -487,6 +492,10 @@ func (s *DeviceState) applyComputeDomainChannelConfig(ctx context.Context, confi
 		return nil, fmt.Errorf("allocation failed: %w", err)
 	}
 
+	if featuregates.Enabled(featuregates.ComputeDomainBindingConditions) {
+		goto skipAssertNamespaceAddNodeLabel
+	}
+
 	// Create any necessary ComputeDomain channels and gather their CDI container edits.
 	if err := s.computeDomainManager.AssertComputeDomainNamespace(ctx, claim.Namespace, config.DomainID); err != nil {
 		return nil, permanentError{fmt.Errorf("error asserting ComputeDomain's namespace: %w", err)}
@@ -495,6 +504,8 @@ func (s *DeviceState) applyComputeDomainChannelConfig(ctx context.Context, confi
 	if err := s.computeDomainManager.AddNodeLabel(ctx, config.DomainID); err != nil {
 		return nil, fmt.Errorf("error adding Node label for ComputeDomain: %w", err)
 	}
+
+skipAssertNamespaceAddNodeLabel:
 
 	if err := s.computeDomainManager.AssertComputeDomainReady(ctx, config.DomainID); err != nil {
 		return nil, fmt.Errorf("error asserting ComputeDomain Ready: %w", err)
