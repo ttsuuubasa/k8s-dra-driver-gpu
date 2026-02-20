@@ -50,6 +50,7 @@ const (
 )
 
 var ErrBindingFailure = errors.New("binding failure")
+var ErrComputeDomainNodeNotReady = errors.New("CD node NotReady")
 
 type ComputeDomainManager struct {
 	config        *Config
@@ -266,7 +267,7 @@ func (m *ComputeDomainManager) AssertComputeDomainReady(ctx context.Context, cdU
 		return fmt.Errorf("%w: current node failed in ComputeDomain", ErrBindingFailure)
 	}
 	if !ready {
-		return fmt.Errorf("current node not ready in ComputeDomain")
+		return fmt.Errorf("%w: current node not ready in ComputeDomain", ErrComputeDomainNodeNotReady)
 	}
 
 	return nil
@@ -471,6 +472,16 @@ func (m *ComputeDomainManager) onAddOrUpdate(ctx context.Context, obj any) error
 
 	klog.V(2).Infof("Processing added or updated ComputeDomain: %s/%s/%s", cd.Namespace, cd.Name, cd.UID)
 
+	//Check if this CD actually still exists
+	current_cd, err := m.GetComputeDomain(ctx, string(cd.UID))
+	if err != nil {
+		return fmt.Errorf("error getting ComputeDomain: %w", err)
+	}
+	if current_cd == nil {
+		klog.V(2).Infof("ComputeDomain not found: %s", string(cd.UID))
+		return nil
+	}
+
 	var foundRCStatus bool
 	if cd.Status.ResourceClaims != nil {
 		for _, rc := range cd.Status.ResourceClaims {
@@ -512,8 +523,13 @@ func (m *ComputeDomainManager) startComputeDomainSettings(ctx context.Context, c
 		if err := m.SetBindingConditions(ctx, rcName, rcNamespace, nvapi.ComputeDomainBindingFailureConditions); err != nil {
 			return fmt.Errorf("error setting BindingFailureConditions to ResourceClaim: %w", err)
 		}
-		return err
+		klog.V(2).Infof("asserting ComputeDomain Ready: %v", err)
+		return nil
 	// NotReady
+	case errors.Is(err, ErrComputeDomainNodeNotReady):
+		klog.V(2).Infof("asserting ComputeDomain Ready: %v", err)
+		return nil
+	//GetComputeDomain error
 	default:
 		return fmt.Errorf("error asserting ComputeDomain Ready: %w", err)
 	}
