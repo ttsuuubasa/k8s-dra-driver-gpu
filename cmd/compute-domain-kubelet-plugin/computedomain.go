@@ -612,7 +612,7 @@ func (m *ComputeDomainManager) RemoveResourceClaimName(ctx context.Context, cdUI
 		return fmt.Errorf("error getting ComputeDomain: %w", err)
 	}
 	if cd == nil {
-		return fmt.Errorf("ComputeDomain not found: %s", cdUID)
+		return nil
 	}
 	newCD := cd.DeepCopy()
 
