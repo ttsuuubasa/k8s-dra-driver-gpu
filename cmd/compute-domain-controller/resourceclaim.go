@@ -317,7 +317,7 @@ func (m *ResourceClaimManager) RemoveResourceClaimName(ctx context.Context, cdUI
 
 	newCD := cd.DeepCopy()
 	newCD.Status.ResourceClaims = filteredResourceClaims
-	_, err = m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).Update(ctx, newCD, metav1.UpdateOptions{})
+	_, err = m.config.clientsets.Nvidia.ResourceV1beta1().ComputeDomains(newCD.Namespace).UpdateStatus(ctx, newCD, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("error updating ComputeDomain(%s/%s) to remove ResourceClaim Name: %w", newCD.Namespace, newCD.Name, err)
 	}
