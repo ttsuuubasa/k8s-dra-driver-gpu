@@ -308,3 +308,15 @@ log() {
   _log_ts_no_newline
   printf "[%6.1fs] $1\n" "$_DUR"
 }
+
+# Simple retry loop
+retry() {
+  # Args : arg1: retries, arg2: wait time in seconds
+  local retries="$1"; local sleep_s="$2"; shift 2
+  local i
+  for i in $(seq 1 "${retries}"); do
+    if "$@" >/dev/null 2>&1; then return 0; fi
+    sleep "${sleep_s}"
+  done
+  return 1
+}

@@ -60,3 +60,29 @@ bats::on_failure() {
       and ((.bindingFailureConditions // []) | index($bfc))
   ' > /dev/null || fail "ResourceSlice ${rsname} missing expected BindingConditions"
 }
+
+# Basic Flow
+@test "CDs: workload pod waits for DS readiness before becoming Running" {
+  local imex_demo_spec="demo/specs/imex/channel-injection.yaml"
+  local imex_demo_cd_name="imex-channel-injection"
+  local imex_demo_pod_name="imex-channel-injection"
+  local imex_demo_rct_name="imex-channel-0"
+
+  # Create ComputeDomain + Pod
+  kubectl apply -f "${imex_demo_spec}"
+  kubectl wait --for=condition=READY pods "${imex_demo_pod_name}" --timeout=80s
+
+  local claim=$(kubectl get resourceclaim | grep "${imex_demo_pod_name}" | awk '{print $1}')
+
+  [[ -n "${claim}" ]] || fail "Could not find ResourceClaim owned by pod ${imex_demo_pod_name}"
+
+  retry 60 1 kubectl get resourceclaim "${claim}" -o jsonpath='{.status.allocation.devices.results[0].device}' \
+    || fail "claim did not become allocated"
+
+  local node
+  node="$(kubectl get resourceclaim "${claim}" -o jsonpath='{.status.allocation.nodeSelector.nodeSelectorTerms[0].matchFields[0].values[0]}' 2>/dev/null || true)"
+  [[ -n "${node}" ]] || fail "allocated node empty"
+
+  local label
+  label=$(kubectl get node "${node}" -o jsonpath='{.metadata.labels["resource.nvidia.com/computeDomain"]}' 2>/dev/null || true)
+}
