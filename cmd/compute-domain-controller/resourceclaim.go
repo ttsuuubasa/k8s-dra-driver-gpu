@@ -35,6 +35,12 @@ import (
 
 var ErrBindingFailure = errors.New("binding failure")
 
+// ComputeDomainChannelResult represents a validated compute domain channel configuration
+type ComputeDomainChannelResult struct {
+	Config      *nvapi.ComputeDomainChannelConfig
+	AllocResult *resourcev1.DeviceRequestAllocationResult
+}
+
 type OpaqueDeviceConfig struct {
 	Requests []string
 	Config   runtime.Object
@@ -120,22 +126,31 @@ func (m *ResourceClaimManager) addOrUpdate(ctx context.Context, obj any) error {
 	}
 
 	// Check the allocationResult of ResourceClaim to determine whether it should be monitored.
-	req, err := m.getComputeDomainChannelRequestConfig(ctx, rc)
+	result, err := m.getComputeDomainChannelResult(rc)
 	if err != nil {
 		return fmt.Errorf("error getting config for ComputeDomainChannel request from ResourceClaim %s/%s: %w", rc.Namespace, rc.Name, err)
 	}
 
-	if req == nil {
+	if result == nil {
 		return nil
 	}
 
 	// Get domain id
-	domainID := req.DomainID
+	domainID := result.Config.DomainID
 
 	if rc.GetDeletionTimestamp() != nil {
 		if err = m.RemoveResourceClaimName(ctx, domainID, rc.Name); err != nil {
 			return fmt.Errorf("error remove ResourceClaim in ComputeDomain: %w", err)
 		}
+		return nil
+	}
+
+	bcSet, err := m.IsBindingConditionsAlreadySet(ctx, rc, result.AllocResult, domainID)
+	if err != nil {
+		return err
+	}
+
+	if bcSet {
 		return nil
 	}
 
@@ -217,10 +232,7 @@ func (m *ResourceClaimManager) addOrUpdate(ctx context.Context, obj any) error {
 // - The driver is "compute-domain.nvidia.com"
 // - The device is a channel device (determined by whether its corresponding config is ComputeDomainChannelConfig)
 // - The device has BindingConditions
-// - The device is not set any BindingConditions/BindingFailureConditions
-func (m *ResourceClaimManager) getComputeDomainChannelRequestConfig(ctx context.Context, rc *resourcev1.ResourceClaim) (*nvapi.ComputeDomainChannelConfig, error) {
-	var config *nvapi.ComputeDomainChannelConfig
-
+func (m *ResourceClaimManager) getComputeDomainChannelResult(rc *resourcev1.ResourceClaim) (*ComputeDomainChannelResult, error) {
 	configs, err := GetOpaqueDeviceConfigs(
 		nvapi.StrictDecoder,
 		DriverName,
@@ -230,7 +242,6 @@ func (m *ResourceClaimManager) getComputeDomainChannelRequestConfig(ctx context.
 		return nil, err
 	}
 
-	var configResults []*resourcev1.DeviceRequestAllocationResult
 	for _, result := range rc.Status.Allocation.Devices.Results {
 		// Check the driver
 		if result.Driver != DriverName {
@@ -238,43 +249,49 @@ func (m *ResourceClaimManager) getComputeDomainChannelRequestConfig(ctx context.
 		}
 		// Check the device is channel device
 		for _, c := range slices.Backward(configs) {
-			if slices.Contains(c.Requests, result.Request) {
-				if _, ok := c.Config.(*nvapi.ComputeDomainChannelConfig); ok {
-					configResults = append(configResults, &result)
-					if config == nil {
-						config = c.Config.(*nvapi.ComputeDomainChannelConfig)
-					}
-					break
-				}
+			if !slices.Contains(c.Requests, result.Request) {
+				continue
 			}
+
+			channelConfig, ok := c.Config.(*nvapi.ComputeDomainChannelConfig)
+			if !ok {
+				continue
+			}
+
+			if !slices.Contains(result.BindingConditions, nvapi.ComputeDomainBindingConditions) {
+				continue
+			}
+
+			return &ComputeDomainChannelResult{
+				Config:      channelConfig,
+				AllocResult: &result,
+			}, nil
 		}
 	}
 
-	for _, result := range configResults {
-		// Check channel device has BindingConditions
-		if slices.Contains(result.BindingConditions, nvapi.ComputeDomainBindingConditions) {
-			for _, deviceStatus := range rc.Status.Devices {
-				if result.Device == deviceStatus.Device {
-					for _, cond := range deviceStatus.Conditions {
-						// Check the device is not set BindingConditions
-						if cond.Type == nvapi.ComputeDomainBindingConditions && cond.Status == metav1.ConditionTrue {
-							return nil, nil
-						}
-						// Check the device is not set BindingFailureConditions
-						if cond.Type == nvapi.ComputeDomainBindingFailureConditions && cond.Status == metav1.ConditionTrue {
-							if err = m.RemoveResourceClaimName(ctx, config.DomainID, rc.Name); err != nil {
-								return nil, fmt.Errorf("error removing ResourceClaim in ComputeDomain: %w", err)
-							}
-							return nil, nil
-						}
-					}
-				}
-			}
-			return config, nil
-		}
-	}
 	return nil, nil
+}
 
+func (m *ResourceClaimManager) IsBindingConditionsAlreadySet(ctx context.Context, rc *resourcev1.ResourceClaim, allocResult *resourcev1.DeviceRequestAllocationResult, domainID string) (bool, error) {
+	for _, deviceStatus := range rc.Status.Devices {
+		if deviceStatus.Driver == allocResult.Driver && deviceStatus.Pool == allocResult.Pool && deviceStatus.Device == allocResult.Device {
+			for _, cond := range deviceStatus.Conditions {
+				// Check the device is not set BindingConditions
+				if cond.Type == nvapi.ComputeDomainBindingConditions && cond.Status == metav1.ConditionTrue {
+					return true, nil
+				}
+				// Check the device is not set BindingFailureConditions
+				if cond.Type == nvapi.ComputeDomainBindingFailureConditions && cond.Status == metav1.ConditionTrue {
+					if err := m.RemoveResourceClaimName(ctx, domainID, rc.Name); err != nil {
+						return true, fmt.Errorf("error removing ResourceClaim in ComputeDomain: %w", err)
+					}
+					return true, nil
+				}
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func (m *ResourceClaimManager) AssertComputeDomainNamespace(claimNamespace, cdUID string) error {
