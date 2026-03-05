@@ -24,9 +24,13 @@ const (
 	ComputeDomainStatusNone     = ""
 	ComputeDomainStatusReady    = "Ready"
 	ComputeDomainStatusNotReady = "NotReady"
+	ComputeDomainStatusFailed   = "Failed"
 
 	ComputeDomainChannelAllocationModeSingle = "Single"
 	ComputeDomainChannelAllocationModeAll    = "All"
+
+	ComputeDomainBindingConditions        = "ComputeDomainReady"
+	ComputeDomainBindingFailureConditions = "ComputeDomainNotReady"
 )
 
 // +genclient
@@ -107,7 +111,7 @@ type ComputeDomainResourceClaimTemplate struct {
 
 // ComputeDomainStatus provides the status for a ComputeDomain.
 type ComputeDomainStatus struct {
-	// +kubebuilder:validation:Enum=Ready;NotReady
+	// +kubebuilder:validation:Enum=Ready;NotReady;Failed
 	// +kubebuilder:default=NotReady
 	Status string `json:"status"`
 	// +listType=map
