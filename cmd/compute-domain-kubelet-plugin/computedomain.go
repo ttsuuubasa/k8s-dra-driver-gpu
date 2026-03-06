@@ -126,16 +126,20 @@ func (m *ComputeDomainManager) Start(ctx context.Context) (rerr error) {
 		return fmt.Errorf("informer cache sync for ComputeDomains failed")
 	}
 
-	if err := m.podManager.Start(ctx); err != nil {
-		return fmt.Errorf("error starting Pod manager: %w", err)
+	if featuregates.Enabled(featuregates.ComputeDomainBindingConditions) {
+		if err := m.podManager.Start(ctx); err != nil {
+			return fmt.Errorf("error starting Pod manager: %w", err)
+		}
 	}
 
 	return nil
 }
 
 func (m *ComputeDomainManager) Stop() error {
-	if err := m.podManager.Stop(); err != nil {
-		return fmt.Errorf("error stopping Pod manager: %w", err)
+	if featuregates.Enabled(featuregates.ComputeDomainBindingConditions) {
+		if err := m.podManager.Stop(); err != nil {
+			return fmt.Errorf("error stopping Pod manager: %w", err)
+		}
 	}
 	if m.cancelContext != nil {
 		m.cancelContext()

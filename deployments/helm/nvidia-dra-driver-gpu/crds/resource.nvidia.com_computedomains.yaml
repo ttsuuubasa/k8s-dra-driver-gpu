@@ -136,6 +136,7 @@ spec:
                       enum:
                       - Ready
                       - NotReady
+                      - Failed
                       type: string
                   required:
                   - cliqueID
@@ -151,7 +152,6 @@ spec:
                 enum:
                 - Ready
                 - NotReady
-                - Failed
                 type: string
             required:
             - status

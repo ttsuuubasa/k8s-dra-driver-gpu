@@ -190,7 +190,7 @@ func (m *PodManager) getResourceClaims(ctx context.Context, pod *corev1.Pod) ([]
 	rcStatuses := pod.Status.ResourceClaimStatuses
 	var rcs []*resourcev1.ResourceClaim
 	for _, rcStatus := range rcStatuses {
-		rc, err := m.config.clientsets.Resource.ResourceClaims(pod.Namespace).Get(ctx, rcStatus.Name, metav1.GetOptions{})
+		rc, err := m.config.clientsets.Resource.ResourceClaims(pod.Namespace).Get(ctx, *rcStatus.ResourceClaimName, metav1.GetOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("error Get API for ResourceClaim: %w", err)
 		}
@@ -214,7 +214,7 @@ type ComputeDomainChannelResult struct {
 // - The device has BindingConditions
 func (m *PodManager) getComputeDomainChannelResult(rc *resourcev1.ResourceClaim) (*ComputeDomainChannelResult, error) {
 	if rc.Status.Allocation == nil || len(rc.Status.ReservedFor) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("error ResourceClaim has no status")
 	}
 
 	configs, err := GetOpaqueDeviceConfigs(
@@ -278,7 +278,7 @@ func (m *PodManager) isBindingConditionsAlreadySet(rc *resourcev1.ResourceClaim,
 func (m *PodManager) SetBindingConditions(ctx context.Context, rcName, rcNamespace string, conditionType string) error {
 	rc, err := m.config.clientsets.Resource.ResourceClaims(rcNamespace).Get(ctx, rcName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to get ResourceClaim: %s/%s", rcNamespace, rcName)
+		return fmt.Errorf("failed to get ResourceClaim %s/%s: %w", rcNamespace, rcName, err)
 	}
 	newRC := rc.DeepCopy()
 	if len(newRC.Status.Devices) == 0 {

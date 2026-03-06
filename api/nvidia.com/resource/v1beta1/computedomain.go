@@ -111,7 +111,7 @@ type ComputeDomainResourceClaimTemplate struct {
 
 // ComputeDomainStatus provides the status for a ComputeDomain.
 type ComputeDomainStatus struct {
-	// +kubebuilder:validation:Enum=Ready;NotReady;Failed
+	// +kubebuilder:validation:Enum=Ready;NotReady
 	// +kubebuilder:default=NotReady
 	Status string `json:"status"`
 	// +listType=map
@@ -138,7 +138,7 @@ type ComputeDomainNode struct {
 	// it is not. It is marked as optional in order to support downgrades
 	// and avoid an API bump.
 	// +kubebuilder:validation:Optional
-	// +kubebuilder:validation:Enum=Ready;NotReady
+	// +kubebuilder:validation:Enum=Ready;NotReady;Failed
 	// +kubebuilder:default:=NotReady
 	Status string `json:"status,omitempty"`
 }
