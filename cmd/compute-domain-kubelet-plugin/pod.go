@@ -27,8 +27,10 @@ import (
 	nvapi "github.com/NVIDIA/k8s-dra-driver-gpu/api/nvidia.com/resource/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 )
@@ -42,13 +44,15 @@ type PodManager struct {
 
 	factory  informers.SharedInformerFactory
 	informer cache.SharedIndexInformer
+	lister   corev1listers.PodLister
 
 	assertNamespaceFunc AssertNameSpaceFunc
 	addNodeLabelFunc    AddNodeLabelFunc
+	removeNodeLabelFunc RemoveNodeLabelFunc
 	assertReadyFunc     AssertReadyFunc
 }
 
-func NewPodManager(config *Config, assertNamespaceFunc AssertNameSpaceFunc, addNodeLabelFunc AddNodeLabelFunc, assertReadyFunc AssertReadyFunc) *PodManager {
+func NewPodManager(config *Config, assertNamespaceFunc AssertNameSpaceFunc, addNodeLabelFunc AddNodeLabelFunc, removeNodeLabelFunc RemoveNodeLabelFunc, assertReadyFunc AssertReadyFunc) *PodManager {
 	selector := fmt.Sprintf("status.nominatedNodeName=%s", config.flags.nodeName)
 
 	factory := informers.NewSharedInformerFactoryWithOptions(
@@ -60,13 +64,16 @@ func NewPodManager(config *Config, assertNamespaceFunc AssertNameSpaceFunc, addN
 	)
 
 	informer := factory.Core().V1().Pods().Informer()
+	lister := factory.Core().V1().Pods().Lister()
 
 	return &PodManager{
 		config:              config,
 		factory:             factory,
 		informer:            informer,
+		lister:              lister,
 		assertNamespaceFunc: assertNamespaceFunc,
 		addNodeLabelFunc:    addNodeLabelFunc,
+		removeNodeLabelFunc: removeNodeLabelFunc,
 		assertReadyFunc:     assertReadyFunc,
 	}
 }
@@ -77,10 +84,18 @@ func (m *PodManager) Start(ctx context.Context) error {
 
 	_, err := m.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
-			m.config.workQueue.EnqueueWithKey(obj, "pod", m.onAddOrUpdate)
+			pod, ok := obj.(*corev1.Pod)
+			if !ok {
+				return
+			}
+			m.config.workQueue.EnqueueWithKey(obj, fmt.Sprintf("%s/%s", pod.Namespace, pod.Name), m.onAddOrUpdate)
 		},
 		UpdateFunc: func(oldObj, newObj any) {
-			m.config.workQueue.EnqueueRawWithKey(newObj, "pod", m.onAddOrUpdate)
+			pod, ok := newObj.(*corev1.Pod)
+			if !ok {
+				return
+			}
+			m.config.workQueue.EnqueueWithKey(newObj, fmt.Sprintf("%s/%s", pod.Namespace, pod.Name), m.onAddOrUpdate)
 		},
 	})
 	if err != nil {
@@ -112,6 +127,15 @@ func (m *PodManager) onAddOrUpdate(ctx context.Context, obj any) error {
 	pod, ok := obj.(*corev1.Pod)
 	if !ok {
 		return fmt.Errorf("failed to cast to Pod")
+	}
+
+	_, err := m.lister.Pods(pod.Namespace).Get(pod.Name)
+	if apierrors.IsNotFound(err) {
+		klog.V(2).Infof("Pod (%s/%s) was removed", pod.Namespace, pod.Name)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("error getting Pod: %w", err)
 	}
 
 	if pod.GetDeletionTimestamp() != nil {
@@ -177,6 +201,9 @@ func (m *PodManager) onAddOrUpdate(ctx context.Context, obj any) error {
 	case errors.Is(err, ErrBindingFailure):
 		if err := m.SetBindingConditions(ctx, targetRC.Name, targetRC.Namespace, nvapi.ComputeDomainBindingFailureConditions); err != nil {
 			return fmt.Errorf("error setting BindingFailureConditions to ResourceClaim: %w", err)
+		}
+		if err := m.removeNodeLabelFunc(ctx, domainID); err != nil {
+			return fmt.Errorf("error removing Node label for ComputeDomain: %w", err)
 		}
 		klog.V(2).Infof("asserting ComputeDomain Ready: %v", err)
 	default:
