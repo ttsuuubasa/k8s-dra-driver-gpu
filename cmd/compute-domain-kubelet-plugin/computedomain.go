@@ -49,6 +49,7 @@ const (
 
 type AssertNameSpaceFunc func(ctx context.Context, claimNamespace, cdUID string) error
 type AddNodeLabelFunc func(ctx context.Context, cdUID string) error
+type RemoveNodeLabelFunc func(ctx context.Context, cdUID string) error
 type AssertReadyFunc func(ctx context.Context, cdUID string) error
 
 type ComputeDomainManager struct {
@@ -86,7 +87,7 @@ func NewComputeDomainManager(config *Config, cliqueID string) *ComputeDomainMana
 		cliqueID:        cliqueID,
 	}
 
-	m.podManager = NewPodManager(config, m.AssertComputeDomainNamespace, m.AddNodeLabel, m.AssertComputeDomainReady)
+	m.podManager = NewPodManager(config, m.AssertComputeDomainNamespace, m.AddNodeLabel, m.RemoveNodeLabel, m.AssertComputeDomainReady)
 
 	return m
 }
